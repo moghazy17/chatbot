@@ -26,9 +26,9 @@ class OpenAIClient:
 
     def _initialize_client(self):
         """Initialize the OpenAI client with API key."""
-        api_key = os.getenv("OPEN_API_KEY")
+        api_key = os.getenv("OPENAI_API_KEY")
         if not api_key:
-            raise ValueError("OPEN_API_KEY environment variable is not set")
+            raise ValueError("OPENAI_API_KEY environment variable is not set")
 
         # Strip any whitespace from the API key
         api_key = api_key.strip()
@@ -48,6 +48,6 @@ def get_openai_client() -> OpenAI:
         OpenAI client instance.
 
     Raises:
-        ValueError: If OPEN_API_KEY is not set.
+        ValueError: If OPENAI_API_KEY is not set.
     """
     return OpenAIClient().client

@@ -143,6 +143,8 @@ def create_chatbot_graph(
 def chat(graph, messages: list, user_input: str) -> tuple[list, str]:
     """
     Process a user message and return the updated messages and response.
+    
+    DEPRECATED: Use TextChatHandler from chatbot.modes instead for better state management.
 
     Args:
         graph: The compiled chatbot graph.
@@ -169,3 +171,20 @@ def chat(graph, messages: list, user_input: str) -> tuple[list, str]:
             break
 
     return updated_messages, assistant_response
+
+
+def extract_response(result: dict) -> str:
+    """
+    Extract the assistant response from graph result.
+    
+    Args:
+        result: Graph invocation result
+        
+    Returns:
+        Assistant's text response
+    """
+    messages = result.get("messages", [])
+    for msg in reversed(messages):
+        if isinstance(msg, AIMessage) and msg.content:
+            return msg.content
+    return ""

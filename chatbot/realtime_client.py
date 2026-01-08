@@ -54,31 +54,41 @@ class RealtimeClient:
         config: Optional[RealtimeConfig] = None,
         on_audio: Optional[Callable[[bytes], None]] = None,
         on_transcript: Optional[Callable[[str, str], None]] = None,
+        on_transcript_done: Optional[Callable[[str, str], None]] = None,
+        on_speech_started: Optional[Callable[[], None]] = None,
+        on_speech_stopped: Optional[Callable[[], None]] = None,
         on_error: Optional[Callable[[str], None]] = None,
     ):
         """
         Initialize the Realtime client.
 
         Args:
-            api_key: OpenAI API key. Uses OPEN_API_KEY env var if not provided.
+            api_key: OpenAI API key. Uses OPENAI_API_KEY env var if not provided.
             config: Session configuration.
             on_audio: Callback for audio output (receives PCM bytes).
-            on_transcript: Callback for transcripts (role, text).
+            on_transcript: Callback for transcript deltas (role, text_delta).
+            on_transcript_done: Callback for completed transcripts (role, full_text).
+            on_speech_started: Callback when AI starts speaking.
+            on_speech_stopped: Callback when AI stops speaking.
             on_error: Callback for errors.
         """
-        self.api_key = api_key or os.getenv("OPEN_API_KEY", "").strip()
+        self.api_key = api_key or os.getenv("OPENAI_API_KEY", "").strip()
         if not self.api_key:
             raise ValueError("OpenAI API key is required")
 
         self.config = config or RealtimeConfig()
         self.on_audio = on_audio
         self.on_transcript = on_transcript
+        self.on_transcript_done = on_transcript_done
+        self.on_speech_started = on_speech_started
+        self.on_speech_stopped = on_speech_stopped
         self.on_error = on_error
 
         self._ws = None
         self._running = False
         self._loop = None
         self._thread = None
+        self._assistant_transcript = ""
 
     def _get_url(self) -> str:
         """Get the WebSocket URL with model parameter."""
@@ -93,13 +103,27 @@ class RealtimeClient:
 
     async def _connect(self):
         """Establish WebSocket connection."""
-        self._ws = await websockets.connect(
-            self._get_url(),
-            additional_headers=self._get_headers(),
-            ping_interval=20,
-            ping_timeout=10,
-        )
-        await self._configure_session()
+        try:
+            self._ws = await websockets.connect(
+                self._get_url(),
+                additional_headers=self._get_headers(),
+                ping_interval=20,
+                ping_timeout=10,
+            )
+            await self._configure_session()
+        except websockets.exceptions.InvalidStatusCode as e:
+            error_msg = f"Connection failed (HTTP {e.status_code})"
+            if e.status_code == 401:
+                error_msg = "Invalid API key. Check your OPENAI_API_KEY in .env file."
+            elif e.status_code == 403:
+                error_msg = "Access denied. Your API key may not have Realtime API access."
+            if self.on_error:
+                self.on_error(error_msg)
+            raise
+        except Exception as e:
+            if self.on_error:
+                self.on_error(f"Connection error: {str(e)}")
+            raise
 
     async def _configure_session(self):
         """Send session configuration."""
@@ -145,26 +169,53 @@ class RealtimeClient:
                 self.on_error(error_msg)
 
         elif msg_type == "response.audio.delta":
-            # Audio chunk received
+            # Audio chunk received - AI is speaking
             audio_b64 = msg.get("delta", "")
             if audio_b64 and self.on_audio:
                 audio_bytes = base64.b64decode(audio_b64)
                 self.on_audio(audio_bytes)
 
         elif msg_type == "response.audio_transcript.delta":
-            # Assistant transcript chunk
+            # Assistant transcript chunk (accumulate)
             text = msg.get("delta", "")
-            if text and self.on_transcript:
-                self.on_transcript("assistant", text)
+            if text:
+                self._assistant_transcript += text
+                if self.on_transcript:
+                    self.on_transcript("assistant", text)
+
+        elif msg_type == "response.audio_transcript.done":
+            # Assistant finished speaking - send complete transcript
+            full_text = msg.get("transcript", self._assistant_transcript)
+            if full_text and self.on_transcript_done:
+                self.on_transcript_done("assistant", full_text)
+            self._assistant_transcript = ""
+            if self.on_speech_stopped:
+                self.on_speech_stopped()
 
         elif msg_type == "conversation.item.input_audio_transcription.completed":
-            # User speech transcription
+            # User speech transcription (already complete)
             text = msg.get("transcript", "")
-            if text and self.on_transcript:
-                self.on_transcript("user", text)
+            if text:
+                if self.on_transcript:
+                    self.on_transcript("user", text)
+                if self.on_transcript_done:
+                    self.on_transcript_done("user", text)
+
+        elif msg_type == "response.created":
+            # AI starting to respond
+            if self.on_speech_started:
+                self.on_speech_started()
 
         elif msg_type == "response.done":
-            # Response completed
+            # Response fully completed
+            pass
+
+        elif msg_type == "input_audio_buffer.speech_started":
+            # User started speaking (VAD detected speech)
+            pass
+
+        elif msg_type == "input_audio_buffer.speech_stopped":
+            # User stopped speaking (VAD detected silence)
             pass
 
         elif msg_type == "session.created":
@@ -196,15 +247,38 @@ class RealtimeClient:
 
     async def _run(self):
         """Main async run loop."""
-        await self._connect()
-        self._running = True
-        await self._receive_loop()
+        try:
+            await self._connect()
+            self._running = True
+            await self._receive_loop()
+        except websockets.exceptions.ConnectionClosedError as e:
+            # Extract error message from close reason
+            error_msg = str(e)
+            if "invalid_api_key" in error_msg.lower():
+                error_msg = "Invalid API key. Please check your OPENAI_API_KEY in .env file."
+            if self.on_error:
+                self.on_error(error_msg)
+            self._running = False
+        except Exception as e:
+            if self.on_error:
+                self.on_error(f"Realtime API error: {str(e)}")
+            self._running = False
 
     def _run_in_thread(self):
         """Run the event loop in a separate thread."""
         self._loop = asyncio.new_event_loop()
         asyncio.set_event_loop(self._loop)
-        self._loop.run_until_complete(self._run())
+        try:
+            self._loop.run_until_complete(self._run())
+        except Exception as e:
+            error_msg = str(e)
+            if "invalid_api_key" in error_msg.lower():
+                error_msg = "Invalid API key. Please check your OPENAI_API_KEY."
+            if self.on_error:
+                self.on_error(error_msg)
+            self._running = False
+        finally:
+            self._loop.close()
 
     def start(self):
         """Start the realtime connection in a background thread."""

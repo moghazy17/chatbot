@@ -2,20 +2,19 @@
 Streamlit Chatbot Application.
 
 A modern chatbot interface powered by LangGraph with support for
-multiple LLM providers: Ollama, Groq, and OpenAI.
-Supports speech-to-text input and text-to-speech output.
+multiple LLM providers and interaction modes:
+- Text Chat: Standard text messaging
+- Voice Chat: Record → Transcribe → Respond → Speak
+- Realtime Voice: Continuous hands-free conversation
 """
 
 import os
 import streamlit as st
 from dotenv import load_dotenv
-from langchain_core.messages import HumanMessage, AIMessage
 
-from chatbot import create_chatbot_graph
+from chatbot import TextChatHandler, VoiceChatHandler
 from chatbot.tools import tools_registry
-from chatbot.graph import chat
 from chatbot.llm_provider import LLMProvider, LLMFactory
-from chatbot.nodes import transcribe_audio, synthesize_speech
 
 # Load environment variables
 load_dotenv()
@@ -106,6 +105,19 @@ st.markdown("""
     .provider-groq { background: linear-gradient(135deg, #f97316, #ea580c); color: white; }
     .provider-openai { background: linear-gradient(135deg, #10a37f, #0d8a6a); color: white; }
 
+    .mode-badge {
+        display: inline-block;
+        padding: 6px 14px;
+        border-radius: 20px;
+        font-size: 0.9rem;
+        margin: 4px;
+        font-family: 'Outfit', sans-serif;
+        font-weight: 500;
+    }
+
+    .mode-text { background: linear-gradient(135deg, #3b82f6, #2563eb); color: white; }
+    .mode-voice { background: linear-gradient(135deg, #ec4899, #db2777); color: white; }
+
     .status-indicator {
         display: inline-flex;
         align-items: center;
@@ -141,6 +153,10 @@ st.markdown("""
         color: #e2e8f0;
         font-family: 'Outfit', sans-serif;
     }
+
+    .tab-content {
+        padding: 1rem 0;
+    }
 </style>
 """, unsafe_allow_html=True)
 
@@ -155,7 +171,10 @@ PROVIDER_DISPLAY = {
     "openai": ("🤖 OpenAI", "openai"),
 }
 
-# Sidebar
+# ================================================================================
+# SIDEBAR CONFIGURATION
+# ================================================================================
+
 with st.sidebar:
     st.markdown("### ⚙️ Configuration")
 
@@ -183,7 +202,6 @@ with st.sidebar:
     base_url = None
 
     if provider == "ollama":
-        # Ollama URL input
         default_url = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
         base_url = st.text_input(
             "Ollama URL",
@@ -192,17 +210,15 @@ with st.sidebar:
             help="Enter your Ollama server URL"
         )
 
-        # Model selection for Ollama
         default_model = os.getenv("OLLAMA_MODEL", "llama3.2")
         ollama_models = LLMFactory.get_default_models(LLMProvider.OLLAMA)
         model = st.selectbox(
             "Model",
             ollama_models,
             index=ollama_models.index(default_model) if default_model in ollama_models else 0,
-            help="Select the Ollama model to use (must be pulled first)"
+            help="Select the Ollama model to use"
         )
 
-        # Custom model input
         custom_model = st.text_input(
             "Or enter custom model",
             placeholder="e.g., llama3.2:70b",
@@ -211,7 +227,6 @@ with st.sidebar:
         selected_model = custom_model if custom_model else model
 
     elif provider == "groq":
-        # Groq API key
         default_api_key = os.getenv("GROQ_API_KEY", "")
         api_key = st.text_input(
             "Groq API Key",
@@ -224,7 +239,6 @@ with st.sidebar:
         if not api_key:
             st.warning("⚠️ Groq API key required")
 
-        # Model selection for Groq
         default_model = os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile")
         groq_models = LLMFactory.get_default_models(LLMProvider.GROQ)
         selected_model = st.selectbox(
@@ -235,7 +249,6 @@ with st.sidebar:
         )
 
     elif provider == "openai":
-        # OpenAI API key
         default_api_key = os.getenv("OPENAI_API_KEY", "")
         api_key = st.text_input(
             "OpenAI API Key",
@@ -248,7 +261,6 @@ with st.sidebar:
         if not api_key:
             st.warning("⚠️ OpenAI API key required")
 
-        # Model selection for OpenAI
         default_model = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
         openai_models = LLMFactory.get_default_models(LLMProvider.OPENAI)
         selected_model = st.selectbox(
@@ -258,7 +270,6 @@ with st.sidebar:
             help="Select the OpenAI model to use"
         )
 
-        # Optional custom base URL
         custom_base_url = st.text_input(
             "Custom Base URL (optional)",
             placeholder="https://api.openai.com/v1",
@@ -283,9 +294,8 @@ with st.sidebar:
     st.divider()
 
     # Audio settings section
-    st.markdown("### 🎤 Audio Settings")
+    st.markdown("### 🎤 Voice Settings")
 
-    # TTS Voice selection
     tts_voice = st.selectbox(
         "TTS Voice",
         ["alloy", "echo", "fable", "onyx", "nova", "shimmer"],
@@ -293,7 +303,6 @@ with st.sidebar:
         help="Select the voice for text-to-speech output"
     )
 
-    # TTS enabled toggle
     tts_enabled = st.toggle("Enable TTS Response", value=True, help="Convert AI responses to speech")
 
     st.divider()
@@ -316,7 +325,7 @@ with st.sidebar:
     st.markdown("### 🎙️ Realtime Voice")
     st.markdown("""
     <p style="font-size: 0.85rem; color: #94a3b8;">
-        For real-time voice conversations, run:
+        For real-time voice conversations:
     </p>
     <code style="background: rgba(124, 58, 237, 0.2); padding: 4px 8px; border-radius: 4px; font-size: 0.8rem;">
         streamlit run realtime_voice.py
@@ -327,168 +336,241 @@ with st.sidebar:
 
     # Clear chat button
     if st.button("🗑️ Clear Chat", use_container_width=True):
-        st.session_state.messages = []
-        st.session_state.graph = None
+        st.session_state.text_handler = None
+        st.session_state.voice_handler = None
         st.rerun()
 
-# Initialize session state
-if "messages" not in st.session_state:
-    st.session_state.messages = []
 
-if "graph" not in st.session_state:
-    st.session_state.graph = None
+# ================================================================================
+# SESSION STATE INITIALIZATION
+# ================================================================================
 
-
-# Initialize/update graph when settings change
-def get_graph():
-    try:
-        return create_chatbot_graph(
+def get_text_handler() -> TextChatHandler:
+    """Get or create the text chat handler."""
+    handler_key = f"text_handler_{provider}_{selected_model}_{temperature}"
+    
+    if "text_handler" not in st.session_state or st.session_state.get("text_handler_key") != handler_key:
+        handler = TextChatHandler(
             provider=provider,
             model=selected_model,
             temperature=temperature,
             api_key=api_key,
-            base_url=base_url
+            base_url=base_url,
         )
-    except ValueError as e:
-        st.error(f"Configuration Error: {str(e)}")
-        return None
-    except Exception as e:
-        st.error(f"Error initializing LLM: {str(e)}")
-        return None
-
-
-# Display chat history
-for message in st.session_state.messages:
-    if isinstance(message, HumanMessage):
-        with st.chat_message("user", avatar="👤"):
-            st.write(message.content)
-    elif isinstance(message, AIMessage) and message.content:
-        with st.chat_message("assistant", avatar="🤖"):
-            st.write(message.content)
-
-# Audio input section
-st.markdown("### 🎙️ Voice Input")
-audio_input = st.audio_input("Record your message", key="audio_recorder")
-
-# Process audio input
-if audio_input is not None:
-    audio_bytes = audio_input.read()
-    if audio_bytes and st.button("📤 Send Voice Message", use_container_width=True):
-        # Check if API key is required and not provided
-        if provider in ["groq", "openai"] and not api_key:
-            st.error(f"Please enter your {provider.upper()} API key in the sidebar.")
+        if handler.initialize():
+            st.session_state.text_handler = handler
+            st.session_state.text_handler_key = handler_key
         else:
-            # Transcribe audio
-            with st.spinner("Transcribing..."):
-                try:
-                    transcribed_text = transcribe_audio(audio_bytes, filename="audio.wav")
-                    if transcribed_text:
-                        # Display user message (transcribed)
-                        with st.chat_message("user", avatar="👤"):
-                            st.write(f"🎤 {transcribed_text}")
+            st.error("Failed to initialize text chat handler")
+            return None
+    
+    return st.session_state.text_handler
 
-                        # Get or create graph
-                        graph = get_graph()
 
-                        if graph:
-                            # Generate response
-                            with st.chat_message("assistant", avatar="🤖"):
-                                with st.spinner("Thinking..."):
-                                    try:
-                                        updated_messages, response = chat(
-                                            graph,
-                                            st.session_state.messages,
-                                            transcribed_text
-                                        )
-                                        st.session_state.messages = updated_messages
-                                        st.write(response)
+def get_voice_handler() -> VoiceChatHandler:
+    """Get or create the voice chat handler."""
+    handler_key = f"voice_handler_{provider}_{selected_model}_{temperature}_{tts_voice}"
+    
+    if "voice_handler" not in st.session_state or st.session_state.get("voice_handler_key") != handler_key:
+        handler = VoiceChatHandler(
+            provider=provider,
+            model=selected_model,
+            temperature=temperature,
+            api_key=api_key,
+            base_url=base_url,
+            tts_voice=tts_voice,
+        )
+        if handler.initialize():
+            st.session_state.voice_handler = handler
+            st.session_state.voice_handler_key = handler_key
+        else:
+            st.error("Failed to initialize voice chat handler")
+            return None
+    
+    return st.session_state.voice_handler
 
-                                        # Generate TTS for response
-                                        if tts_enabled and response:
-                                            with st.spinner("Generating speech..."):
-                                                try:
-                                                    audio_response, audio_format = synthesize_speech(
-                                                        response,
-                                                        voice=tts_voice
-                                                    )
-                                                    if audio_response:
-                                                        st.audio(audio_response, format=f"audio/{audio_format}")
-                                                except Exception as e:
-                                                    st.warning(f"TTS unavailable: {str(e)}")
-                                    except Exception as e:
-                                        st.error(f"Error: {str(e)}")
-                    else:
-                        st.warning("Could not transcribe audio. Please try again.")
-                except Exception as e:
-                    st.error(f"Transcription error: {str(e)}")
+
+# ================================================================================
+# CHAT MODE TABS
+# ================================================================================
+
+# Create tabs for different modes
+tab_text, tab_voice = st.tabs(["💬 Text Chat", "🎤 Voice Chat"])
+
+# ================================================================================
+# TEXT CHAT TAB
+# ================================================================================
+
+with tab_text:
+    st.markdown('<span class="mode-badge mode-text">💬 Text Mode</span>', unsafe_allow_html=True)
+    
+    # Get the handler
+    text_handler = get_text_handler()
+    
+    if text_handler:
+        # Display chat history
+        for message in text_handler.messages:
+            avatar = "👤" if message.role == "user" else "🤖"
+            with st.chat_message(message.role, avatar=avatar):
+                st.write(message.content)
+        
+        # Chat input
+        if prompt := st.chat_input("Type your message...", key="text_input"):
+            if provider in ["groq", "openai"] and not api_key:
+                st.error(f"Please enter your {provider.upper()} API key in the sidebar.")
+            else:
+                # Display user message
+                with st.chat_message("user", avatar="👤"):
+                    st.write(prompt)
+                
+                # Get response
+                with st.chat_message("assistant", avatar="🤖"):
+                    with st.spinner("Thinking..."):
+                        try:
+                            response = text_handler.send_message(prompt)
+                            st.write(response.content)
+                            
+                            # Generate TTS if enabled
+                            if tts_enabled and response.content:
+                                voice_handler = get_voice_handler()
+                                if voice_handler:
+                                    with st.spinner("Generating speech..."):
+                                        try:
+                                            audio_bytes, audio_format = voice_handler.speak(response.content)
+                                            if audio_bytes:
+                                                st.audio(audio_bytes, format=f"audio/{audio_format}")
+                                        except Exception as e:
+                                            st.warning(f"TTS unavailable: {str(e)}")
+                        except Exception as e:
+                            st.error(f"Error: {str(e)}")
+        
+        # Show welcome message if no messages
+        if not text_handler.messages:
+            st.markdown("""
+            <div style="
+                text-align: center;
+                padding: 3rem;
+                color: #94a3b8;
+                font-family: 'Outfit', sans-serif;
+            ">
+                <p style="font-size: 1.2rem; margin-bottom: 1rem;">👋 Welcome to Text Chat!</p>
+                <p>Type a message below to start chatting.</p>
+            </div>
+            """, unsafe_allow_html=True)
+
+
+# ================================================================================
+# VOICE CHAT TAB
+# ================================================================================
+
+with tab_voice:
+    st.markdown('<span class="mode-badge mode-voice">🎤 Voice Mode</span>', unsafe_allow_html=True)
+    
+    st.markdown("""
+    <p style="color: #94a3b8; font-size: 0.9rem; margin-bottom: 1rem;">
+        Record your voice → AI transcribes → Responds with text and speech
+    </p>
+    """, unsafe_allow_html=True)
+    
+    # Get the handler
+    voice_handler = get_voice_handler()
+    
+    if voice_handler:
+        # Display chat history
+        for message in voice_handler.messages:
+            avatar = "👤" if message.role == "user" else "🤖"
+            with st.chat_message(message.role, avatar=avatar):
+                if message.role == "user":
+                    st.write(f"🎤 {message.content}")
+                else:
+                    st.write(message.content)
+        
+        # Audio input
+        st.markdown("### 🎙️ Record Your Message")
+        audio_input = st.audio_input("Click to record", key="voice_recorder")
+        
+        if audio_input is not None:
+            audio_bytes = audio_input.read()
+            
+            if audio_bytes:
+                col1, col2 = st.columns([3, 1])
+                
+                with col1:
+                    st.audio(audio_bytes, format="audio/wav")
+                
+                with col2:
+                    if st.button("📤 Send", use_container_width=True, key="send_voice"):
+                        if provider in ["groq", "openai"] and not api_key:
+                            st.error(f"Please enter your {provider.upper()} API key in the sidebar.")
+                        else:
+                            with st.spinner("Processing..."):
+                                try:
+                                    # Process audio through voice handler
+                                    response, audio_response = voice_handler.process_audio(
+                                        audio_bytes,
+                                        filename="audio.wav",
+                                        generate_audio=tts_enabled,
+                                    )
+                                    
+                                    # Display the transcribed user message
+                                    with st.chat_message("user", avatar="👤"):
+                                        # Get the last user message
+                                        user_msgs = [m for m in voice_handler.messages if m.role == "user"]
+                                        if user_msgs:
+                                            st.write(f"🎤 {user_msgs[-1].content}")
+                                    
+                                    # Display response
+                                    with st.chat_message("assistant", avatar="🤖"):
+                                        st.write(response.content)
+                                        
+                                        # Play audio response
+                                        if audio_response:
+                                            audio_bytes_out, audio_format = audio_response
+                                            st.audio(audio_bytes_out, format=f"audio/{audio_format}")
+                                    
+                                    st.rerun()
+                                    
+                                except ValueError as e:
+                                    st.warning(f"Could not process audio: {str(e)}")
+                                except Exception as e:
+                                    st.error(f"Error: {str(e)}")
+        
+        # Show welcome message if no messages
+        if not voice_handler.messages:
+            st.markdown("""
+            <div style="
+                text-align: center;
+                padding: 3rem;
+                color: #94a3b8;
+                font-family: 'Outfit', sans-serif;
+            ">
+                <p style="font-size: 1.2rem; margin-bottom: 1rem;">👋 Welcome to Voice Chat!</p>
+                <p>Click the microphone button above to record your message.</p>
+                <p style="font-size: 0.85rem; margin-top: 1rem;">
+                    Your speech will be transcribed and the AI will respond with text and audio.
+                </p>
+            </div>
+            """, unsafe_allow_html=True)
+
+
+# ================================================================================
+# FOOTER - REALTIME MODE INFO
+# ================================================================================
 
 st.markdown("---")
-st.markdown("### 💬 Text Input")
-
-# Chat input
-if prompt := st.chat_input("Type your message..."):
-    # Check if API key is required and not provided
-    if provider in ["groq", "openai"] and not api_key:
-        st.error(f"Please enter your {provider.upper()} API key in the sidebar.")
-    else:
-        # Display user message
-        with st.chat_message("user", avatar="👤"):
-            st.write(prompt)
-
-        # Get or create graph
-        graph = get_graph()
-
-        if graph:
-            # Generate response
-            with st.chat_message("assistant", avatar="🤖"):
-                with st.spinner("Thinking..."):
-                    try:
-                        updated_messages, response = chat(
-                            graph,
-                            st.session_state.messages,
-                            prompt
-                        )
-                        st.session_state.messages = updated_messages
-                        st.write(response)
-
-                        # Generate TTS for response
-                        if tts_enabled and response:
-                            with st.spinner("Generating speech..."):
-                                try:
-                                    audio_response, audio_format = synthesize_speech(
-                                        response,
-                                        voice=tts_voice
-                                    )
-                                    if audio_response:
-                                        st.audio(audio_response, format=f"audio/{audio_format}")
-                                except Exception as e:
-                                    st.warning(f"TTS unavailable: {str(e)}")
-                    except Exception as e:
-                        st.error(f"Error: {str(e)}")
-
-# Show welcome message if no messages
-if not st.session_state.messages:
-    st.markdown("""
-    <div style="
-        text-align: center;
-        padding: 3rem;
-        color: #94a3b8;
-        font-family: 'Outfit', sans-serif;
-    ">
-        <p style="font-size: 1.2rem; margin-bottom: 1rem;">👋 Welcome!</p>
-        <p>Choose your LLM provider in the sidebar and start chatting!</p>
-        <p style="font-size: 0.9rem; margin-top: 1rem; color: #64748b;">
-            <strong>Providers:</strong><br>
-            🦙 <strong>Ollama</strong> - Local models (free)<br>
-            ⚡ <strong>Groq</strong> - Fast cloud inference<br>
-            🤖 <strong>OpenAI</strong> - GPT models
-        </p>
-        <p style="font-size: 0.9rem; margin-top: 1rem; color: #64748b;">
-            🎤 <strong>Voice Input:</strong> Record audio to chat with your voice<br>
-            🔊 <strong>TTS Output:</strong> Hear responses spoken aloud
-        </p>
-        <p style="font-size: 0.9rem; margin-top: 1rem; color: #64748b;">
-            Add custom tools in <code style="background: rgba(124, 58, 237, 0.2); padding: 2px 8px; border-radius: 4px;">chatbot/tools.py</code>
-        </p>
-    </div>
-    """, unsafe_allow_html=True)
+st.markdown("""
+<div style="
+    text-align: center;
+    padding: 1rem;
+    color: #64748b;
+    font-family: 'Outfit', sans-serif;
+">
+    <p style="font-size: 0.95rem;">
+        🎙️ <strong>Want Real-Time Voice?</strong>
+    </p>
+    <p style="font-size: 0.85rem;">
+        For continuous, hands-free voice conversation with automatic speech detection,<br>
+        run <code style="background: rgba(124, 58, 237, 0.2); padding: 2px 8px; border-radius: 4px;">streamlit run realtime_voice.py</code>
+    </p>
+</div>
+""", unsafe_allow_html=True)
