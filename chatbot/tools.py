@@ -83,7 +83,7 @@ tools_registry = ToolsRegistry()
 # =============================================================================
 
 # Example tool (uncomment to enable):
-# 
+#
 # @tools_registry.register
 # def get_current_time() -> str:
 #     """Get the current date and time."""
@@ -92,7 +92,7 @@ tools_registry = ToolsRegistry()
 
 # Example tool with parameters:
 #
-# @tools_registry.register  
+# @tools_registry.register
 # def calculate(expression: str) -> str:
 #     """Evaluate a mathematical expression."""
 #     try:
@@ -100,3 +100,21 @@ tools_registry = ToolsRegistry()
 #         return f"Result: {result}"
 #     except Exception as e:
 #         return f"Error: {str(e)}"
+
+
+# =============================================================================
+# IMPORT API TOOLS (auto-registration via decorators)
+# =============================================================================
+
+# Oracle Hospitality API Tools (each tool in its own file)
+try:
+    from chatbot.api.oracle_hospitality.create_service_request import create_service_request
+    from chatbot.api.oracle_hospitality.get_reservation_details import get_reservation_details
+except ImportError as e:
+    print(f"Warning: Could not load Oracle Hospitality tools: {e}")
+except ValueError as e:
+    print(f"Warning: Oracle API not configured: {e}")
+
+# Future API imports go here...
+# Example:
+# from chatbot.api.payment_gateway.tools import process_payment

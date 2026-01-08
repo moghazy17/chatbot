@@ -55,9 +55,15 @@ def create_chatbot_graph(
     def should_use_tools(state: ChatState) -> str:
         """Determine if we should route to tools or end."""
         last_message = state["messages"][-1]
-        
+
         # Check if the AI wants to call tools
         if hasattr(last_message, "tool_calls") and last_message.tool_calls:
+            print(f"\n{'='*80}")
+            print(f"🤖 LLM DECISION: Calling {len(last_message.tool_calls)} tool(s)")
+            for tool_call in last_message.tool_calls:
+                print(f"   → Tool: {tool_call['name']}")
+                print(f"   → Args: {tool_call.get('args', {})}")
+            print(f"{'='*80}\n")
             return "tools"
         return END
     
