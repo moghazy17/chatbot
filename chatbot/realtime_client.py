@@ -2,7 +2,7 @@
 OpenAI Realtime API Client.
 
 This module provides a client for real-time voice conversations using
-OpenAI's Realtime API with WebSocket streaming.
+OpenAI's Realtime API with WebSocket streaming. Supports function calling/tools.
 """
 
 import os
@@ -10,13 +10,22 @@ import json
 import base64
 import asyncio
 import threading
-from typing import Callable, Optional
+from typing import Callable, Optional, List, Dict, Any
 from dataclasses import dataclass, field
 
 import websockets
 from dotenv import load_dotenv
 
 load_dotenv()
+
+
+@dataclass
+class RealtimeTool:
+    """Tool definition for Realtime API."""
+    name: str
+    description: str
+    parameters: Dict[str, Any]  # JSON Schema for parameters
+    handler: Callable[..., str]  # Function to execute
 
 
 @dataclass
@@ -37,6 +46,7 @@ class RealtimeConfig:
     })
     temperature: float = 0.8
     max_response_output_tokens: int = 4096
+    tools: List[RealtimeTool] = field(default_factory=list)
 
 
 class RealtimeClient:
@@ -89,6 +99,11 @@ class RealtimeClient:
         self._loop = None
         self._thread = None
         self._assistant_transcript = ""
+        self._tool_handlers: Dict[str, Callable] = {}
+        
+        # Register tool handlers
+        for tool in self.config.tools:
+            self._tool_handlers[tool.name] = tool.handler
 
     def _get_url(self) -> str:
         """Get the WebSocket URL with model parameter."""
@@ -146,6 +161,18 @@ class RealtimeClient:
                 "model": "whisper-1"
             }
 
+        # Add tools if configured
+        if self.config.tools:
+            session_config["session"]["tools"] = [
+                {
+                    "type": "function",
+                    "name": tool.name,
+                    "description": tool.description,
+                    "parameters": tool.parameters,
+                }
+                for tool in self.config.tools
+            ]
+
         await self._ws.send(json.dumps(session_config))
 
     async def _receive_loop(self):
@@ -201,14 +228,31 @@ class RealtimeClient:
                 if self.on_transcript_done:
                     self.on_transcript_done("user", text)
 
+        elif msg_type == "response.function_call_arguments.done":
+            # Function call completed - execute the tool
+            call_id = msg.get("call_id", "")
+            name = msg.get("name", "")
+            arguments = msg.get("arguments", "{}")
+            
+            print(f"\n🔧 REALTIME TOOL CALL: {name}")
+            print(f"   Arguments: {arguments}")
+            
+            await self._execute_function(call_id, name, arguments)
+
         elif msg_type == "response.created":
             # AI starting to respond
             if self.on_speech_started:
                 self.on_speech_started()
 
         elif msg_type == "response.done":
-            # Response fully completed
-            pass
+            # Response fully completed - check for function calls in output
+            response = msg.get("response", {})
+            output = response.get("output", [])
+            
+            for item in output:
+                if item.get("type") == "function_call":
+                    # Function call result should trigger a new response
+                    pass
 
         elif msg_type == "input_audio_buffer.speech_started":
             # User started speaking (VAD detected speech)
@@ -225,6 +269,45 @@ class RealtimeClient:
         elif msg_type == "session.updated":
             # Session config updated
             pass
+
+    async def _execute_function(self, call_id: str, name: str, arguments: str):
+        """Execute a function call and send the result back."""
+        try:
+            # Parse arguments
+            args = json.loads(arguments) if arguments else {}
+            
+            # Get handler
+            handler = self._tool_handlers.get(name)
+            if not handler:
+                result = f"Error: Unknown function '{name}'"
+            else:
+                # Execute the tool
+                try:
+                    result = handler(**args)
+                    print(f"   ✓ Tool result: {result[:100]}..." if len(result) > 100 else f"   ✓ Tool result: {result}")
+                except Exception as e:
+                    result = f"Error executing {name}: {str(e)}"
+                    print(f"   ✗ Tool error: {e}")
+            
+            # Send function result back
+            await self._ws.send(json.dumps({
+                "type": "conversation.item.create",
+                "item": {
+                    "type": "function_call_output",
+                    "call_id": call_id,
+                    "output": result,
+                }
+            }))
+            
+            # Trigger response generation with the function result
+            await self._ws.send(json.dumps({
+                "type": "response.create",
+            }))
+            
+        except Exception as e:
+            print(f"   ✗ Function execution error: {e}")
+            if self.on_error:
+                self.on_error(f"Tool error: {str(e)}")
 
     async def _send_audio(self, audio_bytes: bytes):
         """Send audio data to the API."""
