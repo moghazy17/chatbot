@@ -3,6 +3,7 @@ Streamlit Chatbot Application.
 
 A modern chatbot interface powered by LangGraph with support for
 multiple LLM providers: Ollama, Groq, and OpenAI.
+Supports speech-to-text input and text-to-speech output.
 """
 
 import os
@@ -14,6 +15,7 @@ from chatbot import create_chatbot_graph
 from chatbot.tools import tools_registry
 from chatbot.graph import chat
 from chatbot.llm_provider import LLMProvider, LLMFactory
+from chatbot.nodes import transcribe_audio, synthesize_speech
 
 # Load environment variables
 load_dotenv()
@@ -280,6 +282,22 @@ with st.sidebar:
 
     st.divider()
 
+    # Audio settings section
+    st.markdown("### 🎤 Audio Settings")
+
+    # TTS Voice selection
+    tts_voice = st.selectbox(
+        "TTS Voice",
+        ["alloy", "echo", "fable", "onyx", "nova", "shimmer"],
+        index=0,
+        help="Select the voice for text-to-speech output"
+    )
+
+    # TTS enabled toggle
+    tts_enabled = st.toggle("Enable TTS Response", value=True, help="Convert AI responses to speech")
+
+    st.divider()
+
     # Tools section
     st.markdown("### 🛠️ Tools")
 
@@ -291,6 +309,19 @@ with st.sidebar:
             st.markdown(f'<span class="tool-badge">{tool_name}</span>', unsafe_allow_html=True)
     else:
         st.info("No tools registered yet. Add tools in `chatbot/tools.py`")
+
+    st.divider()
+
+    # Realtime voice mode link
+    st.markdown("### 🎙️ Realtime Voice")
+    st.markdown("""
+    <p style="font-size: 0.85rem; color: #94a3b8;">
+        For real-time voice conversations, run:
+    </p>
+    <code style="background: rgba(124, 58, 237, 0.2); padding: 4px 8px; border-radius: 4px; font-size: 0.8rem;">
+        streamlit run realtime_voice.py
+    </code>
+    """, unsafe_allow_html=True)
 
     st.divider()
 
@@ -335,6 +366,65 @@ for message in st.session_state.messages:
         with st.chat_message("assistant", avatar="🤖"):
             st.write(message.content)
 
+# Audio input section
+st.markdown("### 🎙️ Voice Input")
+audio_input = st.audio_input("Record your message", key="audio_recorder")
+
+# Process audio input
+if audio_input is not None:
+    audio_bytes = audio_input.read()
+    if audio_bytes and st.button("📤 Send Voice Message", use_container_width=True):
+        # Check if API key is required and not provided
+        if provider in ["groq", "openai"] and not api_key:
+            st.error(f"Please enter your {provider.upper()} API key in the sidebar.")
+        else:
+            # Transcribe audio
+            with st.spinner("Transcribing..."):
+                try:
+                    transcribed_text = transcribe_audio(audio_bytes, filename="audio.wav")
+                    if transcribed_text:
+                        # Display user message (transcribed)
+                        with st.chat_message("user", avatar="👤"):
+                            st.write(f"🎤 {transcribed_text}")
+
+                        # Get or create graph
+                        graph = get_graph()
+
+                        if graph:
+                            # Generate response
+                            with st.chat_message("assistant", avatar="🤖"):
+                                with st.spinner("Thinking..."):
+                                    try:
+                                        updated_messages, response = chat(
+                                            graph,
+                                            st.session_state.messages,
+                                            transcribed_text
+                                        )
+                                        st.session_state.messages = updated_messages
+                                        st.write(response)
+
+                                        # Generate TTS for response
+                                        if tts_enabled and response:
+                                            with st.spinner("Generating speech..."):
+                                                try:
+                                                    audio_response, audio_format = synthesize_speech(
+                                                        response,
+                                                        voice=tts_voice
+                                                    )
+                                                    if audio_response:
+                                                        st.audio(audio_response, format=f"audio/{audio_format}")
+                                                except Exception as e:
+                                                    st.warning(f"TTS unavailable: {str(e)}")
+                                    except Exception as e:
+                                        st.error(f"Error: {str(e)}")
+                    else:
+                        st.warning("Could not transcribe audio. Please try again.")
+                except Exception as e:
+                    st.error(f"Transcription error: {str(e)}")
+
+st.markdown("---")
+st.markdown("### 💬 Text Input")
+
 # Chat input
 if prompt := st.chat_input("Type your message..."):
     # Check if API key is required and not provided
@@ -360,6 +450,19 @@ if prompt := st.chat_input("Type your message..."):
                         )
                         st.session_state.messages = updated_messages
                         st.write(response)
+
+                        # Generate TTS for response
+                        if tts_enabled and response:
+                            with st.spinner("Generating speech..."):
+                                try:
+                                    audio_response, audio_format = synthesize_speech(
+                                        response,
+                                        voice=tts_voice
+                                    )
+                                    if audio_response:
+                                        st.audio(audio_response, format=f"audio/{audio_format}")
+                                except Exception as e:
+                                    st.warning(f"TTS unavailable: {str(e)}")
                     except Exception as e:
                         st.error(f"Error: {str(e)}")
 
@@ -379,6 +482,10 @@ if not st.session_state.messages:
             🦙 <strong>Ollama</strong> - Local models (free)<br>
             ⚡ <strong>Groq</strong> - Fast cloud inference<br>
             🤖 <strong>OpenAI</strong> - GPT models
+        </p>
+        <p style="font-size: 0.9rem; margin-top: 1rem; color: #64748b;">
+            🎤 <strong>Voice Input:</strong> Record audio to chat with your voice<br>
+            🔊 <strong>TTS Output:</strong> Hear responses spoken aloud
         </p>
         <p style="font-size: 0.9rem; margin-top: 1rem; color: #64748b;">
             Add custom tools in <code style="background: rgba(124, 58, 237, 0.2); padding: 2px 8px; border-radius: 4px;">chatbot/tools.py</code>

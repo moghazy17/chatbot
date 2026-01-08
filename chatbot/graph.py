@@ -7,13 +7,27 @@ Supports multiple LLM providers: Ollama, Groq, OpenAI.
 """
 
 from typing import Annotated, TypedDict, Sequence, Optional
-from langchain_core.messages import BaseMessage, HumanMessage, AIMessage, ToolMessage
+from langchain_core.messages import BaseMessage, HumanMessage, AIMessage, ToolMessage, SystemMessage
 from langgraph.graph import StateGraph, END
 from langgraph.graph.message import add_messages
 from langgraph.prebuilt import ToolNode
 
 from .tools import tools_registry
 from .llm_provider import LLMProvider, LLMFactory, LLMConfig
+
+
+# System prompt to guide tool usage
+SYSTEM_PROMPT = """You are a helpful assistant. You have access to tools that can help you answer questions.
+
+IMPORTANT RULES FOR TOOL USAGE:
+1. Only use tools when the user's request REQUIRES information you don't have or an action you can't perform directly.
+2. For simple greetings (hi, hello, how are you), casual conversation, or questions you can answer from your knowledge - DO NOT use tools. Just respond naturally.
+3. Use tools ONLY when:
+   - The user asks about specific hotel reservations, bookings, or guest information
+   - The user needs real-time data you cannot provide from memory
+   - The user explicitly asks you to perform an action (create, update, delete something)
+
+If you're unsure whether to use a tool, prefer responding directly first."""
 
 
 class ChatState(TypedDict):
@@ -68,7 +82,13 @@ def create_chatbot_graph(
 
     def chatbot_node(state: ChatState) -> dict:
         """Process messages and generate a response."""
-        response = llm.invoke(state["messages"])
+        messages = list(state["messages"])
+
+        # Add system prompt if not already present and tools are available
+        if tools and (not messages or not isinstance(messages[0], SystemMessage)):
+            messages = [SystemMessage(content=SYSTEM_PROMPT)] + messages
+
+        response = llm.invoke(messages)
         return {"messages": [response]}
 
     def should_use_tools(state: ChatState) -> str:
