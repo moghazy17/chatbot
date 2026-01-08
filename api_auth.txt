@@ -1,0 +1,8 @@
+curl --location 'https://mtecn1uat.hospitality-api.eu-frankfurt-1.ocs.oc-test.com/oauth/v1/tokens' \
+--header 'Content-Type: application/x-www-form-urlencoded' \
+--header 'x-app-key: f0bbea20-0f71-4390-9a23-88807d93eede' \
+--header 'Authorization: ••••••' \
+--header 'Cookie: ak_bmsc=F030F97D72702B6B8F730FCF0390CD16~000000000000000000000000000000~YAAQdW0UAqaf5C6bAQAAME9ckx4ywCYO207v65vePFcz0S1Hqi4i8IJMVhvD+BT7JZirWCEhxOOWfO5ZviM8TNN91aPNcYoJGvl+ERQhKX/0Q/eG3WnFUBk3AkTNgzkpp/WtcG/bmfXLXZBz7PFXUvxKeCn9dTHp3o8/UA12HF4vRZQNKmj3h0E81NJlmOvx5REdqC6koQcL1+A3CKrjqq5xg7pmI+gOOr3NzqZGMIF57+DQa9FkkRhbOZQ4YFsslk6JQu5yJBqVlnHfV79DYVZlNq6YgWxTnPF+X3s6u8KOY+ATwfcLpdxMpqIXKchZLKKoeN2LKDRdhmHp9L1L0ZmyurHJdpXsz7fx31jVLvgEhCkFyPw6xSVutkvcdD2O7tojAAtiZTJVfN6/OnJ8slc=; bm_sv=88DD083D8213F18373F50016F34EE420~YAAQdW0UAiKl5C6bAQAACHBckx4wvBdCXwKyTOq30sD7FC8tjdLEkDYfsaRUt7bKI9ZlcisTIXP6IICOkIFwweR8snflWFU6WiIZjlDhKWUZtMjJYIowep9RgLJrFB6317NSeBE5/NJUUXFmnclJJ6iCewOz/MgKYCJPBs7kA51H1xY1CBrqz+PiddnM0Xo9ECZ+QIBJmrrhFOnZCf9a5J44BE0NnN5kH9YNl5Xjx0S/ALlKCYemkMm/7/eYOKDZuiG9I3f8M9kYG/mH3KHxiLB7eYg9nWoJBBrvTlgoJvkr+S9s~1' \
+--data-urlencode 'username=OHG_ACT' \
+--data-urlencode 'password=vS3ljywtsqibr' \
+--data-urlencode 'grant_type=password'
