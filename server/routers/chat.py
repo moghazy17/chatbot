@@ -4,6 +4,7 @@ Chat Router.
 Handles chat endpoints for text and voice interactions.
 """
 
+import os
 from typing import Optional
 from fastapi import APIRouter, HTTPException, UploadFile, File, Form
 from fastapi.responses import StreamingResponse
@@ -13,6 +14,21 @@ from ..repository.chat_repository import ChatRepository
 from ..config import config
 
 router = APIRouter()
+
+# Supported audio formats for Whisper API
+SUPPORTED_AUDIO_EXTENSIONS = {
+    ".wav", ".mp3", ".mp4", ".m4a", ".flac", 
+    ".ogg", ".webm", ".mpeg", ".mpga"
+}
+SUPPORTED_AUDIO_MIME_TYPES = {
+    "audio/wav", "audio/wave", "audio/x-wav",
+    "audio/mpeg", "audio/mp3", "audio/mpeg3",
+    "audio/mp4", "audio/m4a", "audio/x-m4a",
+    "audio/flac", "audio/x-flac",
+    "audio/ogg", "audio/vorbis",
+    "audio/webm",
+    "video/mp4", "video/webm",  # Some containers have audio
+}
 
 
 class ChatRequest(BaseModel):
@@ -86,32 +102,130 @@ async def chat(request: ChatRequest):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.post("/voice", response_model=VoiceChatResponse)
+@router.post(
+    "/voice",
+    response_model=VoiceChatResponse,
+    summary="Send audio and get voice response",
+    description="""
+    Send an audio file and receive a transcribed response with optional audio output.
+    
+    **Supported Audio Formats:**
+    - WAV (`.wav`) - Recommended, uncompressed
+    - MP3 (`.mp3`) - Common compressed format
+    - MP4/M4A (`.mp4`, `.m4a`) - Video/audio container
+    - FLAC (`.flac`) - Lossless compression
+    - OGG (`.ogg`) - Open format
+    - WebM (`.webm`) - Web-optimized
+    - MPEG (`.mpeg`, `.mpga`) - Legacy formats
+    
+    **Requirements:**
+    - Max file size: 25MB (OpenAI Whisper limit)
+    - Audio should contain clear speech for best transcription
+    - Requires `OPENAI_API_KEY` to be set (for Whisper STT and TTS)
+    
+    **Response:**
+    - `transcription`: What the user said (transcribed from audio)
+    - `response`: AI's text response
+    - `audio_base64`: AI's audio response (MP3 format, base64 encoded) if `output_audio=true`
+    - `session_id`: Session ID for conversation continuity
+    """,
+    responses={
+        200: {
+            "description": "Successfully processed audio and generated response",
+            "content": {
+                "application/json": {
+                    "example": {
+                        "response": "Hello! How can I help you today?",
+                        "transcription": "Hello",
+                        "session_id": "abc-123-def-456",
+                        "audio_base64": "UklGRiQAAABXQVZFZm10..."
+                    }
+                }
+            }
+        },
+        400: {
+            "description": "Invalid audio format or file too large",
+            "content": {
+                "application/json": {
+                    "example": {
+                        "detail": "Unsupported audio format. Supported formats: .wav, .mp3, .mp4, .m4a, .flac, .ogg, .webm, .mpeg, .mpga"
+                    }
+                }
+            }
+        },
+        500: {
+            "description": "Server error during processing",
+        }
+    }
+)
 async def voice_chat(
-    audio: UploadFile = File(...),
-    session_id: Optional[str] = Form(None),
-    output_audio: bool = Form(True),
-    provider: Optional[str] = Form(None),
-    model: Optional[str] = Form(None),
+    audio: UploadFile = File(
+        ...,
+        description="Audio file to transcribe. Supported formats: WAV, MP3, MP4, M4A, FLAC, OGG, WebM, MPEG",
+    ),
+    session_id: Optional[str] = Form(
+        None,
+        description="Optional session ID for conversation continuity. If not provided, a new session will be created."
+    ),
+    output_audio: bool = Form(
+        True,
+        description="Whether to generate audio response (TTS). If false, only text response is returned."
+    ),
+    provider: Optional[str] = Form(
+        None,
+        description="Optional LLM provider override (ollama, groq, openai). Uses server default if not specified."
+    ),
+    model: Optional[str] = Form(
+        None,
+        description="Optional model override. Uses provider default if not specified."
+    ),
 ):
     """
     Send audio and get a response.
     
-    Args:
-        audio: Audio file upload
-        session_id: Optional session ID
-        output_audio: Whether to generate audio response
-        provider: Optional LLM provider override
-        model: Optional model override
-        
-    Returns:
-        VoiceChatResponse with transcription and response
+    Validates audio format and processes through the unified graph.
     """
     repo = get_chat_repo()
+    
+    # Validate audio file extension
+    if audio.filename:
+        file_ext = os.path.splitext(audio.filename.lower())[1]
+        if file_ext not in SUPPORTED_AUDIO_EXTENSIONS:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Unsupported audio format '{file_ext}'. Supported formats: {', '.join(sorted(SUPPORTED_AUDIO_EXTENSIONS))}"
+            )
+    
+    # Validate MIME type if available
+    if audio.content_type:
+        # Check if it's a supported audio/video MIME type
+        is_supported = (
+            audio.content_type.startswith("audio/") or
+            audio.content_type.startswith("video/") or
+            audio.content_type in SUPPORTED_AUDIO_MIME_TYPES
+        )
+        if not is_supported:
+            # Don't reject based on MIME type alone, but log a warning
+            print(f"⚠️ Warning: Unexpected MIME type '{audio.content_type}' for file '{audio.filename}'")
+    
+    # Check file size (25MB limit for OpenAI Whisper)
+    MAX_FILE_SIZE = 25 * 1024 * 1024  # 25MB
     
     try:
         # Read audio bytes
         audio_bytes = await audio.read()
+        
+        if len(audio_bytes) > MAX_FILE_SIZE:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Audio file too large. Maximum size is 25MB, received {len(audio_bytes) / 1024 / 1024:.2f}MB"
+            )
+        
+        if len(audio_bytes) == 0:
+            raise HTTPException(
+                status_code=400,
+                detail="Audio file is empty"
+            )
         
         response, transcription, session_id, audio_output = repo.send_audio(
             audio_bytes=audio_bytes,
