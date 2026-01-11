@@ -28,10 +28,10 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Include routers
-app.include_router(chat.router, prefix="/chat", tags=["chat"])
-app.include_router(tools.router, prefix="/tools", tags=["tools"])
-app.include_router(graph.router, prefix="/graph", tags=["graph"])
+# Include routers (prefixes are defined in router files)
+app.include_router(chat.router, tags=["chat"])
+app.include_router(tools.router, tags=["tools"])
+app.include_router(graph.router, tags=["graph"])
 
 
 @app.get("/")
@@ -40,12 +40,13 @@ async def root():
     return {
         "name": "Chatbot API",
         "version": "1.0.0",
+        "api_version": "v1",
         "endpoints": {
-            "chat": "/chat",
-            "voice": "/chat/voice",
-            "stream": "/chat/stream",
-            "tools": "/tools",
-            "graph": "/graph",
+            "chat": "/api/v1/chat/",
+            "voice": "/api/v1/chat/voice",
+            "stream": "/api/v1/chat/stream",
+            "tools": "/api/v1/tools/",
+            "graph": "/api/v1/graph/",
         },
     }
 

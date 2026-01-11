@@ -7,7 +7,7 @@ Handles endpoints for graph visualization and information.
 from fastapi import APIRouter
 from fastapi.responses import PlainTextResponse
 
-router = APIRouter()
+router = APIRouter(prefix="/api/v1/graph")
 
 
 @router.get("/", response_class=PlainTextResponse)

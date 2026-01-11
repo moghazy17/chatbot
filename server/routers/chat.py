@@ -13,7 +13,7 @@ from pydantic import BaseModel
 from ..repository.chat_repository import ChatRepository
 from ..config import config
 
-router = APIRouter()
+router = APIRouter(prefix="/api/v1/chat-inhouse")
 
 # Supported audio formats for Whisper API
 SUPPORTED_AUDIO_EXTENSIONS = {

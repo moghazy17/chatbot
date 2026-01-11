@@ -8,7 +8,7 @@ from typing import List
 from fastapi import APIRouter
 from pydantic import BaseModel
 
-router = APIRouter()
+router = APIRouter(prefix="/api/v1/tools")
 
 
 class ToolInfo(BaseModel):
