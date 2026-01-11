@@ -6,6 +6,7 @@ Supports tool calling for hotel services, reservations, etc.
 """
 
 import os
+import json
 import queue
 import threading
 import time
@@ -14,6 +15,7 @@ import streamlit as st
 from dotenv import load_dotenv
 from dataclasses import dataclass, field
 from typing import Optional, List, Dict, Any
+from pathlib import Path
 
 load_dotenv()
 
@@ -26,6 +28,35 @@ except ImportError:
 
 from chatbot.realtime_client import RealtimeClient, RealtimeConfig, RealtimeTool
 from chatbot.tools import tools_registry
+
+
+# ================================================================================
+# LOAD GUEST/HOTEL INFORMATION
+# ================================================================================
+
+def load_guest_info() -> Dict[str, Any]:
+    """Load guest and hotel information from information.json."""
+    info_path = Path(__file__).parent / "information.json"
+    
+    default_info = {
+        "name": "Guest",
+        "hotel": "Hotel",
+    }
+    
+    try:
+        if info_path.exists():
+            with open(info_path, "r", encoding="utf-8") as f:
+                info = json.load(f)
+                print(f"📋 Loaded guest info: {info}")
+                return {**default_info, **info}
+    except Exception as e:
+        print(f"Warning: Could not load information.json: {e}")
+    
+    return default_info
+
+
+# Load info at startup
+GUEST_INFO = load_guest_info()
 
 # Page configuration
 st.set_page_config(
@@ -456,7 +487,7 @@ def on_error(error: str):
 # ================================================================================
 
 st.markdown('<h1 class="main-header">🎙️ Voice Chat</h1>', unsafe_allow_html=True)
-st.markdown('<p class="sub-header">Natural conversation with hotel assistant</p>', unsafe_allow_html=True)
+st.markdown(f'<p class="sub-header">Welcome, {GUEST_INFO.get("name", "Guest")}! Your {GUEST_INFO.get("hotel", "Hotel")} concierge is ready.</p>', unsafe_allow_html=True)
 
 
 # ================================================================================
@@ -466,18 +497,60 @@ st.markdown('<p class="sub-header">Natural conversation with hotel assistant</p>
 with st.sidebar:
     st.markdown("### Settings")
     
+    # Show current guest context
+    st.markdown("### 👤 Guest Context")
+    guest_context = f"**Guest:** {GUEST_INFO.get('name', 'Unknown')}\n\n**Hotel:** {GUEST_INFO.get('hotel', 'Unknown')}"
+    if GUEST_INFO.get('room_number'):
+        guest_context += f"\n\n**Room:** {GUEST_INFO.get('room_number')}"
+    if GUEST_INFO.get('reservation_id'):
+        guest_context += f"\n\n**Reservation:** {GUEST_INFO.get('reservation_id')}"
+    if GUEST_INFO.get('vip_status'):
+        guest_context += "\n\n⭐ **VIP Guest**"
+    st.info(guest_context)
+    
+    st.divider()
+    
     voice = st.selectbox("Voice", ["nova", "alloy", "echo", "fable", "onyx", "shimmer"], index=0)
+    
+    # Build default instructions with guest context
+    guest_name = GUEST_INFO.get('name', 'Guest')
+    hotel_name = GUEST_INFO.get('hotel', 'Hotel')
+    room_number = GUEST_INFO.get('room_number', '')
+    reservation_id = GUEST_INFO.get('reservation_id', '')
+    vip_status = GUEST_INFO.get('vip_status', False)
+    
+    context_lines = [
+        f"- Guest name: {guest_name}",
+        f"- Hotel: {hotel_name}",
+    ]
+    if room_number:
+        context_lines.append(f"- Room number: {room_number}")
+    if reservation_id:
+        context_lines.append(f"- Reservation ID: {reservation_id}")
+    if vip_status:
+        context_lines.append("- VIP Guest: Yes (provide extra attentive service)")
+    
+    context_text = "\n".join(context_lines)
+    
+    default_instructions = f"""You are a friendly concierge assistant at {hotel_name}.
+
+GUEST CONTEXT (use this information when relevant):
+{context_text}
+
+Your role:
+- Help {guest_name} with room service requests (towels, water, amenities)
+- When creating service requests, use room {room_number if room_number else 'number provided by guest'}
+- Look up reservations (you can use reservation ID {reservation_id} if asked)
+- Provide local recommendations
+- Answer questions about the hotel
+
+Be warm, professional, and concise. Address the guest by name naturally.
+Use the available tools when the guest needs services."""
     
     instructions = st.text_area(
         "AI Personality",
-        value="""You are a friendly hotel concierge assistant. Help guests with:
-- Room service requests (towels, water, amenities)
-- Reservation lookups
-- Local recommendations
-- General hotel information
-
-Be warm, professional, and concise. Use the available tools when guests need services.""",
-        height=120,
+        value=default_instructions,
+        height=160,
     )
     
     st.divider()
