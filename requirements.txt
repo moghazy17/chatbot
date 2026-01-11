@@ -14,3 +14,4 @@ streamlit-webrtc>=0.47.0
 av>=12.0.0
 numpy>=1.24.0
 sounddevice>=0.4.6
+fastapi=0.128.0

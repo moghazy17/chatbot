@@ -1,23 +1,23 @@
 """
-Create Service Request - API Implementation.
+Create Service Request Tool.
 
-This module contains the API implementation.
-Tool registration is handled in chatbot/tools/oracle_hospitality/create_service_request.py
+This tool allows the chatbot to create service requests for hotel guests.
 """
 
 from typing import Optional
-from ..exceptions import (
+from ..registry import tools_registry
+from ...api.exceptions import (
     APIAuthenticationError,
     APIValidationError,
     APITimeoutError,
     APIConnectionError,
     APIServerError,
 )
-from .models import ServiceRequestInput
-from ._client_init import get_client, get_api_logger
+from ...api.oracle_hospitality.models import ServiceRequestInput
+from ...api.oracle_hospitality._client_init import get_client, get_api_logger
 
 
-# NOTE: Tool registration moved to chatbot/tools/oracle_hospitality/create_service_request.py
+@tools_registry.register
 def create_service_request(
     request_code: str,
     room_number: str,

@@ -1,21 +1,21 @@
 """
-Get Reservation Details - API Implementation.
+Get Reservation Details Tool.
 
-This module contains the API implementation. 
-Tool registration is handled in chatbot/tools/oracle_hospitality/get_reservation.py
+This tool allows the chatbot to retrieve reservation details for hotel guests.
 """
 
-from ..exceptions import (
+from ..registry import tools_registry
+from ...api.exceptions import (
     APIAuthenticationError,
     APITimeoutError,
     APIConnectionError,
     APIServerError,
     APINotFoundError,
 )
-from ._client_init import get_client, get_api_logger
+from ...api.oracle_hospitality._client_init import get_client, get_api_logger
 
 
-# NOTE: Tool registration moved to chatbot/tools/oracle_hospitality/get_reservation.py
+@tools_registry.register
 def get_reservation_details(reservation_id: str) -> str:
     """
     Retrieve details about a hotel reservation.

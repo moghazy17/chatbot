@@ -8,7 +8,7 @@ from typing import Optional, List
 from langchain_core.messages import BaseMessage, HumanMessage, AIMessage
 
 from .base import BaseChatHandler, ChatMessage, ChatMode
-from ..graph import create_chatbot_graph
+from ..graph import create_unified_graph
 
 
 class TextChatHandler(BaseChatHandler):
@@ -25,13 +25,14 @@ class TextChatHandler(BaseChatHandler):
     def initialize(self) -> bool:
         """Create and compile the chat graph."""
         try:
-            self._graph = create_chatbot_graph(
-                provider=self.provider,
-                model=self.model,
-                temperature=self.temperature,
-                api_key=self.api_key,
-                base_url=self.base_url,
-            )
+            self._graph = create_unified_graph()
+            self._llm_config = {
+                "provider": self.provider,
+                "model": self.model,
+                "temperature": self.temperature,
+                "api_key": self.api_key,
+                "base_url": self.base_url,
+            }
             self._initialized = True
             return True
         except Exception as e:
@@ -58,8 +59,16 @@ class TextChatHandler(BaseChatHandler):
         # Build LangChain messages for the graph
         lc_messages = self.langchain_messages
 
-        # Invoke the graph
-        result = self._graph.invoke({"messages": lc_messages})
+        # Invoke the graph with unified state
+        result = self._graph.invoke({
+            "messages": lc_messages,
+            "input_type": "text",
+            "output_type": "text",
+            "audio_input": None,
+            "audio_output": None,
+            "transcription": None,
+            "llm_config": self._llm_config,
+        })
 
         # Extract the response
         response_messages = result.get("messages", [])
@@ -93,11 +102,20 @@ class TextChatHandler(BaseChatHandler):
         self.add_message("user", content)
         lc_messages = self.langchain_messages
 
-        # Stream from the graph
+        # Stream from the graph with unified state
         collected_response = ""
-        for chunk in self._graph.stream({"messages": lc_messages}):
+        state = {
+            "messages": lc_messages,
+            "input_type": "text",
+            "output_type": "text",
+            "audio_input": None,
+            "audio_output": None,
+            "transcription": None,
+            "llm_config": self._llm_config,
+        }
+        for chunk in self._graph.stream(state):
             for node_name, node_output in chunk.items():
-                if node_name == "chatbot":
+                if node_name == "llm":
                     messages = node_output.get("messages", [])
                     for msg in messages:
                         if isinstance(msg, AIMessage) and msg.content:
